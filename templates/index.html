@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TrafficWatch — Road Incident & Safety Pipeline</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #12151b; --panel: #1a1e26; --panel-2: #20242e; --line: #2b303c;
+    --text: #e7e9ee; --muted: #8b93a3; --amber: #f5a623; --danger: #e5484d;
+    --safe: #34c98e; --accent: #3f8cff;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; font-family:'Inter',sans-serif; background: var(--bg); color:var(--text); min-height:100vh; }
+  header.top{ display:flex;align-items:center;justify-content:space-between; padding:18px 28px; border-bottom:1px solid var(--line); background:rgba(18,21,27,0.85); position:sticky;top:0;z-index:20; }
+  .brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:1.15rem;}
+  .badges{display:flex;gap:10px;margin-left:18px;}
+  .badge{ font-family:'JetBrains Mono',monospace; font-size:0.72rem; padding:4px 10px; border-radius:999px; border:1px solid var(--line); color:var(--muted); display:flex;align-items:center;gap:6px; }
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--safe);}
+  .dot.off{background:var(--danger);}
+  .clock{font-family:'JetBrains Mono',monospace;color:var(--muted);font-size:0.82rem;}
+  button.sync{ background:var(--accent);color:#fff;border:none;border-radius:8px; padding:9px 16px;font-weight:600;font-size:0.85rem;cursor:pointer; }
+  nav.tabs{ display:flex;gap:6px;padding:14px 28px 0 28px;flex-wrap:wrap; }
+  nav.tabs button{ background:var(--panel);border:1px solid var(--line);color:var(--muted); padding:10px 16px;border-radius:9px 9px 0 0;font-size:0.85rem;font-weight:600; cursor:pointer;border-bottom:none; }
+  nav.tabs button.active{color:var(--text);background:var(--panel-2);border-color:var(--amber);}
+  main{padding:0 28px 40px 28px;}
+  .panel-wrap{ background:var(--panel-2);border:1px solid var(--line);border-radius:0 10px 10px 10px; padding:20px; }
+  .grid-2{display:grid;grid-template-columns:1.4fr 1fr;gap:18px;}
+  .card{ background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px; }
+  .card h3{margin:0 0 4px 0;font-size:1rem;}
+  .card p.sub{margin:0 0 14px 0;color:var(--muted);font-size:0.8rem;}
+  #map{height:420px;border-radius:8px;overflow:hidden;}
+  table{width:100%;border-collapse:collapse;font-size:0.85rem;}
+  th{text-align:left;color:var(--muted);font-weight:600;font-size:0.72rem;text-transform:uppercase;padding:8px 10px;border-bottom:1px solid var(--line);}
+  td{padding:9px 10px;border-bottom:1px solid var(--line);}
+  .pill{padding:3px 9px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:0.72rem;}
+  .pill.crit{background:rgba(229,72,77,0.15);color:var(--danger);}
+  .pill.high{background:rgba(245,166,35,0.15);color:var(--amber);}
+  .pill.elev{background:rgba(63,140,255,0.15);color:var(--accent);}
+  .pill.mod{background:rgba(52,201,142,0.15);color:var(--safe);}
+  .kpi-row{display:flex;gap:14px;margin-bottom:16px;flex-wrap:wrap;}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 18px;min-width:150px;}
+  .kpi .num{font-family:'JetBrains Mono',monospace;font-size:1.5rem;font-weight:700;}
+  .kpi .lbl{color:var(--muted);font-size:0.75rem;margin-top:2px;}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div style="display:flex;align-items:center;">
+    <div class="brand">🚦 TrafficWatch</div>
+    <div class="badges">
+      <span class="badge"><span class="dot"></span>Live Telemetry</span>
+      <span class="badge" id="hdfsBadge"><span class="dot off"></span>Checking storage…</span>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:16px;">
+    <div class="clock" id="clock"></div>
+    <button class="sync" onclick="loadAll()">↻ Sync Pipeline</button>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button class="active" data-tab="map">Live Incident Hotspots Map</button>
+  <button data-tab="corridors">Dangerous Corridors & Crash Types</button>
+  <button data-tab="blackspots">Accident Blackspots</button>
+  <button data-tab="bench">Parallel Scaling Benchmark</button>
+</nav>
+
+<main>
+  <div class="panel-wrap">
+
+    <section id="tab-map" class="tabpane">
+      <div class="grid-2">
+        <div class="card">
+          <h3>Interactive Incident Hotspots</h3>
+          <p class="sub">Live coordinates clustered on the map.</p>
+          <div id="map"></div>
+        </div>
+        <div class="card">
+          <h3>Traffic Class Distribution</h3>
+          <p class="sub">Proportional breakdown of incident severity categories.</p>
+          <canvas id="classChart" height="260"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-corridors" class="tabpane" style="display:none;">
+      <div class="grid-2">
+        <div class="card">
+          <h3>Top 10 Dangerous Streets & Corridors</h3>
+          <table>
+            <thead><tr><th>#</th><th>Corridor</th><th>Count</th><th>Avg Severity</th></tr></thead>
+            <tbody id="corridorsBody"></tbody>
+          </table>
+        </div>
+        <div class="card">
+          <h3>Crash Type Incident Frequency</h3>
+          <canvas id="typeChart" height="260"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-blackspots" class="tabpane" style="display:none;">
+      <div class="card">
+        <h3>Grid-Aggregated Accident Blackspots</h3>
+        <p class="sub">High-density zones (~10km x 10km grid).</p>
+        <table>
+          <thead><tr><th>#</th><th>Lat Grid</th><th>Lon Grid</th><th>Density</th><th>Avg Severity</th><th>Max Severity</th><th>Danger Level</th></tr></thead>
+          <tbody id="blackspotsBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="tab-bench" class="tabpane" style="display:none;">
+      <div class="kpi-row" id="regionKpis"></div>
+      <div class="card">
+        <h3>Amdahl's Law: Theoretical Speedup</h3>
+        <canvas id="speedupChart" height="260"></canvas>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<script>
+let map, markersLayer, classChart, typeChart, speedupChart;
+
+function setClock(){ document.getElementById('clock').textContent = new Date().toLocaleString(); }
+setInterval(setClock, 1000); setClock();
+
+document.querySelectorAll('nav.tabs button').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.tabpane').forEach(p=>p.style.display='none');
+    document.getElementById('tab-'+btn.dataset.tab).style.display='block';
+    if(btn.dataset.tab==='map' && map){ setTimeout(()=>map.invalidateSize(), 100); }
+  });
+});
+
+function dangerClass(level){
+  if(level.includes('CRITICAL')) return 'crit';
+  if(level.includes('HIGH')) return 'high';
+  if(level.includes('ELEVATED')) return 'elev';
+  return 'mod';
+}
+
+async function loadStatus(){
+  const res = await fetch('/api/status');
+  const data = await res.json();
+  const badge = document.getElementById('hdfsBadge');
+  badge.innerHTML = `<span class="dot ${data.hdfs_online ? '' : 'off'}"></span>${data.label}`;
+}
+
+async function loadMap(){
+  if(!map){
+    map = L.map('map').setView([30, 68], 5);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
+    markersLayer = L.layerGroup().addTo(map);
+  }
+  const res = await fetch('/api/incidents');
+  const data = await res.json();
+  markersLayer.clearLayers();
+  data.incidents.slice(0, 500).forEach(inc=>{
+    const color = inc.severity_score > 7 ? '#e5484d' : inc.severity_score > 5 ? '#f5a623' : '#3f8cff';
+    L.circleMarker([inc.latitude, inc.longitude], { radius:4, color, fillColor:color, fillOpacity:0.7, weight:1 })
+      .bindPopup(`<b>${inc.type}</b><br>${inc.road_name}<br>Severity: ${inc.severity_score}`).addTo(markersLayer);
+  });
+}
+
+async function loadClassChart(){
+  const res = await fetch('/api/class-distribution');
+  const data = await res.json();
+  const labels = data.data.map(d=>d.traffic_class);
+  const counts = data.data.map(d=>d.incident_count);
+  const ctx = document.getElementById('classChart');
+  if(classChart) classChart.destroy();
+  classChart = new Chart(ctx, {
+    type:'doughnut',
+    data:{ labels, datasets:[{ data:counts, backgroundColor:['#34c98e','#f5a623','#e5484d','#7a1f22'] }]},
+    options:{ plugins:{ legend:{ labels:{ color:'#e7e9ee' } } } }
+  });
+}
+
+async function loadCorridors(){
+  const res = await fetch('/api/corridors');
+  const data = await res.json();
+  const body = document.getElementById('corridorsBody');
+  body.innerHTML = '';
+  data.data.forEach((c,i)=>{
+    body.innerHTML += `<tr><td>${i+1}</td><td>${c.road_name}</td><td>${c.incident_count}</td><td>${c.avg_severity.toFixed(2)}</td></tr>`;
+  });
+
+  const res2 = await fetch('/api/incidents');
+  const inc = (await res2.json()).incidents;
+  const typeCounts = {};
+  inc.forEach(r=> typeCounts[r.type] = (typeCounts[r.type]||0)+1 );
+  const ctx = document.getElementById('typeChart');
+  if(typeChart) typeChart.destroy();
+  typeChart = new Chart(ctx, {
+    type:'bar',
+    data:{ labels:Object.keys(typeCounts), datasets:[{ data:Object.values(typeCounts), backgroundColor:'#3f8cff' }]},
+    options:{ plugins:{legend:{display:false}}, scales:{ x:{ticks:{color:'#8b93a3'}}, y:{ticks:{color:'#8b93a3'}} } }
+  });
+}
+
+async function loadBlackspots(){
+  const res = await fetch('/api/blackspots');
+  const data = await res.json();
+  const body = document.getElementById('blackspotsBody');
+  body.innerHTML = '';
+  data.data.forEach((b,i)=>{
+    body.innerHTML += `<tr><td>${i+1}</td><td>${b.lat_grid}°</td><td>${b.lon_grid}°</td><td>${b.incident_count}</td><td>${b.avg_severity.toFixed(2)}</td><td>${b.max_severity.toFixed(2)}</td><td><span class="pill ${dangerClass(b.danger_level)}">${b.danger_level}</span></td></tr>`;
+  });
+}
+
+async function loadBenchmark(){
+  const res = await fetch('/api/speedup');
+  const data = await res.json();
+  const ctx = document.getElementById('speedupChart');
+  if(speedupChart) speedupChart.destroy();
+  speedupChart = new Chart(ctx, {
+    type:'line',
+    data:{ labels:data.cores, datasets:[{ label:'Theoretical Speedup (P=0.85)', data:data.theoretical, borderColor:'#f5a623', backgroundColor:'transparent' }]},
+    options:{ plugins:{legend:{labels:{color:'#e7e9ee'}}}, scales:{ x:{ticks:{color:'#8b93a3'}}, y:{ticks:{color:'#8b93a3'}} } }
+  });
+
+  const res2 = await fetch('/api/region-stats');
+  const rs = await res2.json();
+  const kpis = document.getElementById('regionKpis');
+  kpis.innerHTML = '';
+  rs.data.forEach(r=>{
+    kpis.innerHTML += `<div class="kpi"><div class="num">${r.total_crashes}</div><div class="lbl">${r.region} incidents · avg sev ${r.avg_severity_score.toFixed(2)}</div></div>`;
+  });
+}
+
+async function loadAll(){
+  await loadStatus();
+  await loadMap();
+  await loadClassChart();
+  await loadCorridors();
+  await loadBlackspots();
+  await loadBenchmark();
+}
+loadAll();
+</script>
+
+</body>
+</html>
